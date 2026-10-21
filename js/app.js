@@ -75,6 +75,10 @@
 
     const myRating = ratings[r.name];
     if (myRating) score += myRating === 1 ? -60 : (myRating - 3) * 6;
+
+    // Общий рейтинг немного сдвигает подбор, когда голосов уже достаточно
+    const community = SharedRatings.get(r.name);
+    if (community && community.votes >= 3) score += (community.avg - 3) * 3;
     return score;
   }
 
@@ -162,6 +166,20 @@
 
   // --- Отрисовка ---
 
+  function plural(n, one, few, many) {
+    const m10 = n % 10;
+    const m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+  }
+
+  function communityBadge(name) {
+    const c = SharedRatings.get(name);
+    if (!c) return '';
+    return `<span class="community" title="Средняя оценка посетителей">★ ${c.avg.toFixed(1)} · ${c.votes} ${plural(c.votes, 'оценка', 'оценки', 'оценок')}</span>`;
+  }
+
   const esc = (str) => String(str).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
   function renderMix(idx, seed, score, isRandom) {
@@ -191,7 +209,7 @@
           ? '<span class="badge">🎲 случайный</span>'
           : `<span class="badge" title="Насколько микс совпадает с настройками">совпадение ${matchPercent(score)}%</span>`}
       </div>
-      <div class="tags">${r.cats.map((c) => `<span class="tag">${CATEGORIES[c]}</span>`).join('')}</div>
+      <div class="tags">${r.cats.map((c) => `<span class="tag">${CATEGORIES[c]}</span>`).join('')}${communityBadge(r.name)}</div>
       <ul class="parts">${rows}</ul>
       <div class="desc">${notes.map((n) => `<p>${esc(n)}</p>`).join('')}</div>
       ${r.tip ? `<p class="tip">💡 ${esc(r.tip)}</p>` : ''}
@@ -208,6 +226,7 @@
         if (ratings[r.name] === value) delete ratings[r.name];
         else ratings[r.name] = value;
         saveRatings();
+        SharedRatings.rate(r.name, ratings[r.name] || null);
         // Оставляем на экране этот же микс, даже если он опустился в подборе
         pinned = { idx, seed, random: isRandom };
         render();
@@ -277,7 +296,7 @@
         ${alts.map((a) => {
           const r = RECIPES[a.idx];
           return `<button class="alt" type="button" data-idx="${a.idx}">
-            <span class="alt-name">${esc(r.name)}</span>
+            <span class="alt-name">${esc(r.name)} ${communityBadge(r.name)}</span>
             <span class="alt-comp">${r.parts.map(([id]) => esc(FLAVORS[id].label)).join(' + ')}</span>
             <span class="alt-score">${matchPercent(a.score)}%</span>
           </button>`;
@@ -409,6 +428,9 @@
     const idx = num('r', 0, RECIPES.length - 1, -1);
     if (idx >= 0) pinned = { idx, seed: num('v', 0, 1e9, 1) };
   }
+
+  // Общий рейтинг приходит позже первой отрисовки
+  SharedRatings.onChange(render);
 
   readHash();
   initControls();
