@@ -20,6 +20,37 @@
   // Ручной выбор (рандом или клик по альтернативе); сбрасывается при изменении настроек
   let pinned = null; // { idx, seed }
 
+  // --- Оценки (хранятся в браузере пользователя) ---
+
+  const RATINGS_KEY = 'zames:ratings';
+  const RATING_HINTS = {
+    1: 'Больше не будем предлагать этот микс.',
+    2: 'Будем предлагать реже.',
+    3: 'Оценка сохранена.',
+    4: 'Будем предлагать чаще.',
+    5: 'Любимый микс: будет в начале подборки.',
+  };
+
+  function loadRatings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(RATINGS_KEY));
+      return saved && typeof saved === 'object' ? saved : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveRatings() {
+    try {
+      localStorage.setItem(RATINGS_KEY, JSON.stringify(ratings));
+    } catch {
+      // Хранилище недоступно (приватный режим) — оценки живут до перезагрузки
+    }
+  }
+
+  // Ключ — название микса: { 'Арбуз и дыня': 5 }
+  const ratings = loadRatings();
+
   // --- Подбор ---
 
   function scoreRecipe(r, s) {
@@ -41,6 +72,9 @@
     if (s.ice > 0) {
       score += { 2: 8, 1: -5 * s.ice, 0: -40 * s.ice }[r.ice];
     }
+
+    const myRating = ratings[r.name];
+    if (myRating) score += myRating === 1 ? -60 : (myRating - 3) * 6;
     return score;
   }
 
@@ -161,10 +195,24 @@
       <ul class="parts">${rows}</ul>
       <div class="desc">${notes.map((n) => `<p>${esc(n)}</p>`).join('')}</div>
       ${r.tip ? `<p class="tip">💡 ${esc(r.tip)}</p>` : ''}
+      ${starsBlock(r.name)}
       <div class="mix-actions">
         <button class="btn small" id="reroll" type="button">Другие бренды</button>
         <button class="btn small" id="share" type="button">Скопировать ссылку</button>
       </div>`;
+
+    for (const star of $('mix').querySelectorAll('.star')) {
+      star.onclick = () => {
+        const value = Number(star.dataset.value);
+        // Повторный клик по той же звезде снимает оценку
+        if (ratings[r.name] === value) delete ratings[r.name];
+        else ratings[r.name] = value;
+        saveRatings();
+        // Оставляем на экране этот же микс, даже если он опустился в подборе
+        pinned = { idx, seed, random: isRandom };
+        render();
+      };
+    }
 
     $('reroll').onclick = () => {
       pinned = { idx, seed: seed + 1, random: isRandom };
@@ -179,6 +227,46 @@
         $('share').textContent = 'Ссылка в адресной строке';
       }
     };
+  }
+
+  function starsBlock(name) {
+    const current = ratings[name] || 0;
+    const stars = [1, 2, 3, 4, 5].map((v) => `
+      <button type="button" class="star${v <= current ? ' on' : ''}" data-value="${v}"
+        aria-label="${v} из 5" aria-pressed="${v === current}">★</button>`).join('');
+    return `
+      <div class="rate">
+        <span class="rate-label">Ваша оценка</span>
+        <div class="stars">${stars}</div>
+        <span class="rate-hint">${current ? RATING_HINTS[current] : 'Попробовали? Оцените, и подбор станет точнее.'}</span>
+      </div>`;
+  }
+
+  function renderRated() {
+    const rated = RECIPES
+      .map((r, idx) => ({ r, idx, v: ratings[r.name] }))
+      .filter((x) => x.v)
+      .sort((a, b) => b.v - a.v || a.r.name.localeCompare(b.r.name, 'ru'));
+    if (!rated.length) {
+      $('rated').innerHTML = '';
+      return;
+    }
+    $('rated').innerHTML = `
+      <h3>Мои оценки</h3>
+      <div class="rated-list">
+        ${rated.map((x) => `
+          <button class="rated-item" type="button" data-idx="${x.idx}">
+            <span>${esc(x.r.name)}</span>
+            <span class="rated-stars" aria-label="${x.v} из 5">${'★'.repeat(x.v)}<span class="dim">${'★'.repeat(5 - x.v)}</span></span>
+          </button>`).join('')}
+      </div>`;
+    for (const btn of $('rated').querySelectorAll('.rated-item')) {
+      btn.onclick = () => {
+        pinned = { idx: Number(btn.dataset.idx), seed: 1 };
+        render();
+        $('mix').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      };
+    }
   }
 
   function renderAlts(ranked, currentIdx) {
@@ -217,6 +305,7 @@
     const seed = pinned ? pinned.seed : 1;
     renderMix(pick.idx, seed, pick.score, pinned?.random);
     renderAlts(ranked, pick.idx);
+    renderRated();
   }
 
   // --- Управление ---
